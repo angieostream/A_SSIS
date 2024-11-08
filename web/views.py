@@ -1,5 +1,6 @@
 from flask import Blueprint, render_template, request, flash, redirect, url_for, current_app
 from flask_mysqldb import MySQL
+import cloudinary.uploader
 
 views = Blueprint('views', __name__)
 mysql = MySQL()
@@ -19,12 +20,19 @@ def get_programs():
 @views.route('/students', methods=['GET', 'POST'])
 def students():
     if request.method == 'POST':
+        image = request.files.get('image')
         id = request.form['id']
         firstname = request.form['firstname']
         lastname = request.form['lastname']
         course = request.form['course']
         year = request.form['year']
         gender = request.form['gender']
+
+        image_url = None
+        if image:
+            upload_result = cloudinary.uploader.upload(image)
+            image_url = upload_result.get("secure_url")
+            print(f"Image URL from Cloudinary: {image_url}")
 
         #check that all fields are filled
         if not (id and firstname and lastname and course and year and gender):
@@ -43,7 +51,7 @@ def students():
 
     return render_template('students.html', student=students_list, programs=programs)
 
-def create_student(id, firstname, lastname, course, year, gender):
+def create_student(id, firstname, lastname, course, year, gender, image_url):
     cur = mysql.connection.cursor()
 
     cur.execute("SELECT * FROM students WHERE id=%s", (id,))
@@ -54,17 +62,23 @@ def create_student(id, firstname, lastname, course, year, gender):
         return False  
 
     query = '''
-        INSERT INTO students (id, firstname, lastname, course, year, gender)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        INSERT INTO students (id, firstname, lastname, course, year, gender, image_url)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
     '''
-    cur.execute(query, (id, firstname, lastname, course, year, gender))
-    mysql.connection.commit()
-    cur.close()
+    try:
+        cur.execute(query, (id, firstname, lastname, course, year, gender, image_url))  
+        mysql.connection.commit()
+        print("Student record inserted successfully!")  
+    except Exception as e:
+        print(f"Error inserting student: {e}")  
+    finally:
+        cur.close()
+    
     return True  
 
 def get_students():
     cur = mysql.connection.cursor()
-    cur.execute('SELECT id, firstname, lastname, course, year, gender FROM students')
+    cur.execute('SELECT image_url, id, firstname, lastname, course, year, gender FROM students')
     students = cur.fetchall()
     cur.close()
     return students
@@ -79,22 +93,36 @@ def delete(id_data):
 
 @views.route('/update', methods=['POST'])
 def update():
-    if request.method == 'POST':
-        id_data = request.form['id']
-        firstname = request.form['firstname']
-        lastname = request.form['lastname']
-        course = request.form['course']
-        year = request.form['year']
-        gender = request.form['gender']
+    student_id = request.form['id']
+    firstname = request.form['firstname']
+    lastname = request.form['lastname']
+    course = request.form['course']
+    year = request.form['year']
+    gender = request.form['gender']
+    current_image_url = request.form['current_image_url']
+    
+    new_image_url = None
+    if 'photo' in request.files:
+        file = request.files['photo']
+        if file:
+            upload_result = cloudinary_upload(file)
+            new_image_url = upload_result['url']  #
+            
+    if not new_image_url:
+        new_image_url = current_image_url
 
-        cur = mysql.connection.cursor()
-        cur.execute(""" 
-        UPDATE students SET firstname=%s, lastname=%s, course=%s, year=%s, gender=%s 
-        WHERE id=%s 
-        """, (firstname, lastname, course, year, gender, id_data))
-        mysql.connection.commit()
-        flash("Student Record Updated Successfully", "success")
-        return redirect(url_for('views.students'))
+    cursor = mysql.connection.cursor()
+    cursor.execute("""
+        UPDATE students SET 
+        firstname = %s, lastname = %s, course = %s, year = %s, gender = %s, image_url = %s
+        WHERE id = %s
+    """, (firstname, lastname, course, year, gender, new_image_url, student_id))
+    
+    mysql.connection.commit()
+    cursor.close()
+    
+    flash('Student updated successfully!', 'success')
+    return redirect(url_for('views.students'))  
 
 # Colleges routes
 @views.route('/colleges', methods=['GET', 'POST'])
